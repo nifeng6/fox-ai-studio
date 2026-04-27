@@ -1,0 +1,14 @@
+pub mod channel_types;
+pub mod chat;
+pub mod provider;
+pub mod knowledge;
+pub mod mcp;
+pub mod file;
+pub mod proxy;
+pub mod clipboard;
+pub mod selection;
+pub mod desktop;
+pub mod input;
+pub mod agent_loop;
+pub mod tools;
+pub mod notification;

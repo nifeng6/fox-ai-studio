@@ -1,0 +1,98 @@
+@use './variables';
+@use './animations';
+@use './element-overrides';
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: var(--fox-fs, 14px);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--user-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif);
+  font-size: var(--fox-fs, 14px);
+  line-height: 1.5;
+  color: var(--color-text-1);
+  background: var(--color-background);
+  overflow: hidden;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+}
+
+::selection {
+  background: var(--color-primary-soft);
+  color: var(--fox-accent-fg);
+}
+
+a {
+  color: var(--fox-accent-fg);
+  text-decoration: none;
+  &:hover { opacity: 0.8; }
+}
+
+button {
+  font-family: inherit;
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-text-3);
+  border-radius: 4px;
+  &:hover { background: var(--color-text-2); }
+}
+
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+}
+
+.nodrag {
+  -webkit-app-region: no-drag;
+}
+
+.glass-light {
+  background: var(--color-background-opacity);
+  backdrop-filter: blur(var(--glass-blur-light));
+  -webkit-backdrop-filter: blur(var(--glass-blur-light));
+}
+
+.glass-heavy {
+  background: var(--modal-background);
+  backdrop-filter: blur(var(--glass-blur-heavy));
+  -webkit-backdrop-filter: blur(var(--glass-blur-heavy));
+  border: 1px solid var(--color-border);
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.08s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}

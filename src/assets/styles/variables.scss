@@ -1,0 +1,89 @@
+:root {
+  --color-background: #1e1e1e;
+  --color-background-soft: #252525;
+  --color-background-mute: #2c2c2c;
+  --color-background-opacity: rgba(30, 30, 30, 0.85);
+
+  --color-text-1: rgba(255, 255, 255, 0.92);
+  --color-text-2: rgba(255, 255, 255, 0.65);
+  --color-text-3: rgba(255, 255, 255, 0.38);
+
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-soft: rgba(255, 255, 255, 0.05);
+
+  --color-hover: rgba(255, 255, 255, 0.06);
+  --color-active: rgba(255, 255, 255, 0.09);
+
+  --color-primary: #1a1a1a;
+  --color-primary-soft: rgba(255, 255, 255, 0.12);
+  --color-primary-mute: rgba(255, 255, 255, 0.06);
+
+  --color-error: #ef4444;
+  --color-warning: #f59e0b;
+  --color-success: #22c55e;
+  --color-info: #64748b;
+
+  --color-icon: rgba(255, 255, 255, 0.45);
+  --color-icon-white: rgba(255, 255, 255, 0.85);
+
+  --navbar-background: #171717;
+  --navbar-height: 38px;
+  --modal-background: #2a2a2a;
+
+  --glass-blur-light: 12px;
+  --glass-blur-heavy: 20px;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+
+  --fox-sidebar-w: 50px;
+  --fox-radius-xs: 6px;
+  --fox-radius-sm: 10px;
+  --fox-radius-md: 14px;
+  --fox-radius-lg: 18px;
+  --fox-radius-xl: 22px;
+  --fox-fs: 14px;
+  --fox-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --fox-accent: #1a1a1a;
+  --fox-accent-fg: rgba(255, 255, 255, 0.92);
+  --fox-accent-on: var(--color-background);
+  --fox-accent-border: rgba(255, 255, 255, 0.25);
+  --fox-accent-soft: rgba(255, 255, 255, 0.08);
+}
+
+[theme-mode='light'] {
+  --color-background: #f5f5f5;
+  --color-background-soft: #ffffff;
+  --color-background-mute: #eaeaea;
+  --color-background-opacity: rgba(255, 255, 255, 0.85);
+
+  --color-text-1: rgba(0, 0, 0, 0.88);
+  --color-text-2: rgba(0, 0, 0, 0.60);
+  --color-text-3: rgba(0, 0, 0, 0.35);
+
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-border-soft: rgba(0, 0, 0, 0.04);
+
+  --color-hover: rgba(0, 0, 0, 0.04);
+  --color-active: rgba(0, 0, 0, 0.07);
+
+  --color-primary: #1a1a1a;
+  --color-primary-soft: rgba(0, 0, 0, 0.08);
+  --color-primary-mute: rgba(0, 0, 0, 0.04);
+
+  --color-icon: rgba(0, 0, 0, 0.40);
+  --color-icon-white: rgba(0, 0, 0, 0.80);
+
+  --navbar-background: #e8e8e8;
+  --modal-background: #ffffff;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.1);
+
+  --fox-accent-fg: rgba(0, 0, 0, 0.88);
+  --fox-accent-on: #ffffff;
+  --fox-accent-border: rgba(0, 0, 0, 0.2);
+  --fox-accent-soft: rgba(0, 0, 0, 0.06);
+}
