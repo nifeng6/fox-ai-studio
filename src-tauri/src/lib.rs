@@ -6,6 +6,9 @@ use commands::knowledge::KnowledgeState;
 use commands::mcp::McpState;
 use commands::proxy::{ApiServerHandle, ApiServerState};
 use commands::agent_loop::AgentLoopState;
+use commands::task_manager::TaskManagerState;
+use commands::platform_gateway::{GatewayHandle, GatewayState, PlatformConfigsState};
+use commands::agent_reflection::ReflectionStateManager;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::{
@@ -94,6 +97,27 @@ pub fn run() {
                 *providers = saved;
             }
 
+            // Set task manager app data dir for persistence
+            {
+                let task_state: State<TaskManagerState> = app.state();
+                if let Ok(data_dir) = app.path().app_data_dir() {
+                    task_state.set_app_data_dir(data_dir);
+                }
+            }
+
+            // 崩溃恢复：加载未完成的任务
+            {
+                let task_state: State<TaskManagerState> = app.state();
+                match commands::task_manager::recover_incomplete_tasks(&*task_state) {
+                    Ok(count) => {
+                        if count > 0 {
+                            log::info!("[lib] 恢复了 {} 个未完成任务", count);
+                        }
+                    }
+                    Err(e) => log::warn!("[lib] 任务恢复失败: {}", e),
+                }
+            }
+
             Ok(())
         })
         .manage(ProviderState(Mutex::new(vec![])))
@@ -105,6 +129,14 @@ pub fn run() {
             running: false,
         })))
         .manage(AgentLoopState(Arc::new(Mutex::new(HashMap::new()))))
+        .manage(TaskManagerState::new())
+        .manage(GatewayState(Arc::new(Mutex::new(GatewayHandle {
+            shutdown_tx: None,
+            port: 23334,
+            running: false,
+        }))))
+        .manage(PlatformConfigsState(Arc::new(Mutex::new(HashMap::new()))))
+        .manage(ReflectionStateManager::new())
         .invoke_handler(tauri::generate_handler![
             // Chat
             commands::chat::send_chat_message,
@@ -176,6 +208,22 @@ pub fn run() {
             // Channel Notifications
             commands::notification::send_channel_notification,
             commands::notification::test_channel_webhook,
+            // Task Manager
+            commands::task_manager::create_task,
+            commands::task_manager::resume_task,
+            commands::task_manager::pause_task,
+            commands::task_manager::list_tasks,
+            commands::task_manager::get_task_detail,
+            commands::task_manager::update_task_plan,
+            commands::task_manager::update_task_status,
+            commands::task_manager::delete_task,
+            commands::task_manager::add_screenshot_history,
+            commands::task_manager::add_conversation_entry,
+            // Platform Gateway
+            commands::platform_gateway::start_platform_gateway,
+            commands::platform_gateway::stop_platform_gateway,
+            commands::platform_gateway::configure_platform,
+            commands::platform_gateway::test_platform,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

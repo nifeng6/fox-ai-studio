@@ -12,3 +12,6 @@ pub mod input;
 pub mod agent_loop;
 pub mod tools;
 pub mod notification;
+pub mod task_manager;
+pub mod platform_gateway;
+pub mod agent_reflection;
