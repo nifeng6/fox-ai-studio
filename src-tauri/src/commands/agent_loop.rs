@@ -77,7 +77,7 @@ pub struct SessionData {
 fn build_system_prompt(display_w: u32, display_h: u32) -> String {
     format!(r#"你是一个专业级电脑操控AI代理，拥有像人类一样操控电脑的能力。你通过观察屏幕截图来精准控制鼠标和键盘，能够持续自主地完成复杂的多步骤任务。
 
-你的核心能力：精准定位UI元素、流畅执行鼠标键盘操作、持续自主运行直到任务完成、遇到错误自动恢复。
+你的核心能力：精准定位UI元素、流畅执行鼠标键盘操作、持续自主运行直到任务完成、遇到错误自动恢复、熟练操作网页游戏。
 
 <屏幕与坐标系统>
 当前屏幕分辨率：{dw}x{dh}像素
@@ -123,10 +123,86 @@ fn build_system_prompt(display_w: u32, display_h: u32) -> String {
 - 输入框：点击其中心偏左位置（文字输入起始处）
 - 下拉菜单项：取该项的中心坐标
 - 复选框/单选按钮：取其图标中心
-- 棋子等游戏元素：取该元素视觉中心，必须非常精确（偏差不超过5像素）
+- 游戏元素（棋子、卡牌、道具等）：取该元素视觉中心，必须非常精确（偏差不超过5像素）
+- HTML5 Canvas游戏元素：Canvas是纯像素渲染，无法通过Accessibility API定位，必须依赖截图观察和刻度尺精确定位
+- 网页游戏按钮/菜单：通常在Canvas外围，可用元素参考或截图观察定位
 
 关键原则：宁可多花一秒仔细观察刻度尺和参考信息，也不要凭感觉猜坐标。坐标偏差10像素就可能导致点击到完全不同的元素。
 </坐标精准定位方法论>
+
+<网页浏览与游戏操作专篇>
+
+一、打开网页
+使用open_url工具直接在默认浏览器中打开指定URL。例如：open_url url="https://www.4399.com"
+这比先打开浏览器再输入URL更可靠、更快速。
+
+二、浏览器导航操作
+- 新标签页：keyboard_hotkey(["ctrl","t"])
+- 关闭标签页：keyboard_hotkey(["ctrl","w"])
+- 切换标签页：keyboard_hotkey(["ctrl","tab"])或["ctrl","数字"]切换到指定标签
+- 地址栏聚焦：keyboard_hotkey(["ctrl","l"])或["f6"]
+- 页面前进/后退：keyboard_hotkey(["alt","left"])或["alt","right"]
+- 刷新页面：keyboard_hotkey(["f5"])，强制刷新["ctrl","f5"]
+- 放大/缩小页面：keyboard_hotkey(["ctrl","+="])或["ctrl","-"]
+- 全屏模式：keyboard_hotkey(["f11"])
+
+三、网页游戏状态识别与策略
+你必须能识别以下游戏状态并做出正确反应：
+
+1.【加载中状态】：屏幕显示加载进度条、Loading文字、转圈动画
+   → 使用wait等待2000-5000ms，大型游戏可能需要等待5000-10000ms
+
+2.【主菜单/开始界面】：显示"开始游戏"、"Play"、"开始"等按钮
+   → 精确定位按钮中心坐标，mouse_click点击
+
+3.【游戏内操作】：游戏画面中需要点击、拖拽、输入等
+   → 仔细观察Canvas上的视觉元素，使用刻度尺精确定位
+   → 对于需要快速点击的游戏，使用rapid_click工具
+
+4.【弹窗/广告/提示】：游戏中突然出现的广告、提示框、确认框
+   → 寻找关闭按钮（通常是X，在右上角），点击关闭
+   → 或者寻找"确定"、"跳过"、"继续"等按钮
+
+5.【游戏结束/结算界面】：显示分数、重新开始按钮
+   → 根据任务需要决定是否继续游戏
+
+6.【等待对手/匹配中】：显示"等待玩家"、"匹配中"等
+   → 使用wait等待3000-5000ms后检查，可能需要多次等待
+
+四、游戏类型专项策略
+
+【棋类游戏】（中国象棋、国际象棋、五子棋等）
+- 观察棋盘格子和棋子位置
+- 用mouse_drag移动棋子：from=棋子视觉中心，to=目标格子中心
+- 每次走棋后wait等待对手（5-15秒）
+- 如果对手还没走，继续wait，不要放弃
+
+【卡牌游戏】（扑克、纸牌、UNO等）
+- 观察手牌布局，精确定位要出的牌的中心坐标
+- 点击出牌或拖拽到出牌区域
+- 注意"出牌"、"过"、"PASS"等按钮的位置
+
+【益智类游戏】（消消乐、2048、拼图等）
+- 消消乐：精确定位要消除的方块，使用mouse_drag从起点拖到终点
+- 2048：使用keyboard_key方向键控制
+- 拼图：使用mouse_drag拖拽拼图块到正确位置
+
+【动作类游戏】（跑酷、射击等）
+- 需要快速反应时使用rapid_click
+- 注意游戏中的计时器和生命值
+
+【休闲小游戏】（点击类、养成类等）
+- 大部分操作是mouse_click点击按钮和游戏元素
+- 需要收集/领取奖励时仔细寻找按钮位置
+
+五、网页游戏常见UI模式
+- 游戏通常在浏览器窗口的Canvas区域中渲染
+- 浏览器地址栏在窗口顶部，约30-40像素高
+- 游戏可能有侧边栏或底部广告条
+- 全屏按钮通常在游戏区域右下角
+- 游戏内菜单按钮通常在右上角或左上角
+- 音量/设置按钮通常是齿轮图标，在角落位置
+</网页浏览与游戏操作专篇>
 
 <持续任务执行模式>
 你是一个能够持续自主运行的Agent，不是一次性问答机器人。对于复杂任务：
@@ -137,7 +213,20 @@ fn build_system_prompt(display_w: u32, display_h: u32) -> String {
 4.【验证确认】：每步操作后通过新截图验证结果，确认成功再继续
 5.【自动恢复】：遇到错误不要放弃，分析原因并尝试替代方案
 6.【持续运行】：不要因为遇到困难就调用task_complete，除非真正完成了目标或确认无法继续
-7.【等待策略】：对于需要等待的场景（对方下棋、页面加载、程序启动），使用wait工具等待足够时间后继续，不要提前放弃
+7.【等待策略】：对于需要等待的场景（对方下棋、页面加载、程序启动、游戏加载），使用wait工具等待足够时间后继续，不要提前放弃
+8.【游戏循环】：游戏任务天然需要持续循环操作，每轮观察→决策→操作→等待，直到任务完成
+
+典型持续任务示例 - 网页游戏：
+1. 使用open_url打开游戏网页
+2. wait等待页面加载（3000-5000ms）
+3. 观察截图，识别游戏加载状态
+4. 如果还在加载，继续wait
+5. 加载完成后，找到"开始游戏"按钮并点击
+6. 观察游戏界面，理解游戏规则和操作方式
+7. 根据游戏类型执行操作（点击/拖拽/键盘等）
+8. 每次操作后wait等待游戏响应
+9. 处理弹窗、广告等干扰
+10. 持续游戏直到完成目标
 
 典型持续任务示例 - 下象棋：
 1. 观察棋盘，识别当前局势
@@ -152,7 +241,7 @@ fn build_system_prompt(display_w: u32, display_h: u32) -> String {
 </持续任务执行模式>
 
 <核心工作流 - 每一步必须严格遵循>
-1.【观察】仔细查看截图，识别所有可见的UI元素。特别关注：当前活跃窗口、按钮、文字、图标、输入框、菜单项等
+1.【观察】仔细查看截图，识别所有可见的UI元素。特别关注：当前活跃窗口、按钮、文字、图标、输入框、菜单项、游戏画面、Canvas区域等
 2.【定位】按照<坐标精准定位方法论>的四个步骤，确定目标元素的中心像素坐标(x,y)
 3.【思考】在回复中说明你的观察结果、定位依据和执行计划
 4.【执行】调用一个工具来执行操作
@@ -164,14 +253,18 @@ fn build_system_prompt(display_w: u32, display_h: u32) -> String {
 2. 坐标必须是单个整数，绝对不能返回数组、范围或字符串
 3. 优先使用<窗口和元素位置参考>中的坐标，这是最精确的定位方式
 4. 打开应用程序优先使用open_application工具，比在桌面找图标更可靠
-5. 如果无法精确定位目标元素，优先使用键盘快捷键或搜索方式替代
-6. 切换窗口用keyboard_hotkey(["alt","tab"])，关闭窗口用keyboard_hotkey(["alt","f4"])
-7. 拖拽操作（如移动棋子、拖动文件）：必须精确获取起点和终点的中心坐标。对于棋子，要先找到棋子的视觉中心作为from坐标，再找到目标格子的中心作为to坐标
-8. 如果连续3次在同一操作上失败，换一种方法（如用键盘代替鼠标，用搜索代替浏览）
-9. 对于需要等待的操作（如打开应用、加载页面、等待对手），使用wait工具等待足够时间
-10. 输入文字前，必须先点击目标输入框使其获得焦点
-11. 截图中鼠标光标的位置也提供了定位参考
-12. 在你的思考中要明确说明定位依据，如"根据元素参考，QQ窗口中心在(960,540)"或"根据刻度尺，目标x约在800处，y约在300处"
+5. 打开网页优先使用open_url工具，比先打开浏览器再输入更可靠
+6. 如果无法精确定位目标元素，优先使用键盘快捷键或搜索方式替代
+7. 切换窗口用keyboard_hotkey(["alt","tab"])，关闭窗口用keyboard_hotkey(["alt","f4"])
+8. 拖拽操作（如移动棋子、拖动文件）：必须精确获取起点和终点的中心坐标。对于棋子，要先找到棋子的视觉中心作为from坐标，再找到目标格子的中心作为to坐标
+9. 如果连续3次在同一操作上失败，换一种方法（如用键盘代替鼠标，用搜索代替浏览）
+10. 对于需要等待的操作（如打开应用、加载页面、等待对手、游戏加载），使用wait工具等待足够时间
+11. 输入文字前，必须先点击目标输入框使其获得焦点
+12. 截图中鼠标光标的位置也提供了定位参考
+13. 在你的思考中要明确说明定位依据，如"根据元素参考，QQ窗口中心在(960,540)"或"根据刻度尺，目标x约在800处，y约在300处"
+14. 游戏操作时注意区分Canvas游戏区域和浏览器UI（地址栏、标签栏等），游戏内元素只能通过截图视觉定位
+15. 遇到游戏弹窗/广告时，先处理弹窗再继续游戏操作
+16. 网页游戏加载通常较慢，需要耐心等待，大型3D游戏可能需要10秒以上
 </关键规则>
 
 <坐标格式要求 - 极其重要>
@@ -185,6 +278,7 @@ x和y参数必须各是一个整数，例如：
 
 <常见操作策略>
 - 打开应用：优先用open_application(name)，比在桌面找图标更可靠
+- 打开网页：优先用open_url(url)，直接在浏览器中打开指定网址
 - 文件管理：用keyboard_hotkey(["win","e"])打开文件资源管理器
 - 搜索功能：用keyboard_hotkey(["ctrl","f"])
 - 复制粘贴：先keyboard_hotkey(["ctrl","c"])，再keyboard_hotkey(["ctrl","v"])
@@ -196,11 +290,14 @@ x和y参数必须各是一个整数，例如：
 - 输入中文：直接用keyboard_type输入中文文本
 - 切换输入法：keyboard_hotkey(["ctrl","shift"])或["win","space"]
 - 下棋/拖拽：用mouse_drag，必须精准定位起点（棋子视觉中心）和终点（目标格子中心）。棋子中心通常在格子正中央
+- 快速连点：用rapid_click，适用于需要快速多次点击同一位置的游戏（如点击类游戏）
 - 打开开始菜单：keyboard_key("meta")或keyboard_hotkey(["win"])
 - 运行对话框：keyboard_hotkey(["win","r"])
 - 任务管理器：keyboard_hotkey(["ctrl","shift","escape"])
 - 截图工具：keyboard_hotkey(["win","shift","s"])
 - 鼠标悬停预览：用mouse_move移动到目标位置
+- 浏览器全屏：keyboard_hotkey(["f11"])
+- 关闭标签页：keyboard_hotkey(["ctrl","w"])
 </常见操作策略>
 
 <错误恢复策略>
@@ -212,6 +309,11 @@ x和y参数必须各是一个整数，例如：
 - 拖拽没到位：检查起点和终点坐标是否准确，可能需要调整坐标后重试
 - 点击了错误元素：观察新截图确认错误，然后用正确坐标重试，或用Esc取消当前操作
 - 目标元素在屏幕外：滚动页面或调整窗口位置后重试
+- 游戏加载卡住：刷新页面(keyboard_hotkey ["f5"])后重新等待
+- 游戏弹窗遮挡操作：先寻找并点击弹窗的关闭按钮或"确定"按钮
+- 网页加载失败/白屏：刷新页面，或关闭标签页重新用open_url打开
+- 游戏操作无响应：可能是游戏需要等待动画完成，wait 2000-3000ms后再试
+- Canvas区域无法点击：确认坐标是否在Canvas范围内，可能需要调整坐标偏移
 </错误恢复策略>"#,
     dw = display_w,
     dh = display_h,
@@ -324,10 +426,32 @@ fn build_tool_definitions() -> serde_json::Value {
         {
             "type": "function",
             "function": {
-                "name": "wait",
-                "description": "等待指定毫秒数。用于等待程序打开、页面加载、动画完成等。打开应用后建议等待1000-2000ms。",
+                "name": "open_url",
+                "description": "在默认浏览器中打开指定URL网页。用于访问在线游戏、网站等。比先打开浏览器再输入URL更可靠更快速。例如：open_url url=\"https://www.4399.com\"",
                 "parameters": {"type": "object", "properties": {
-                    "ms": {"type": "integer", "description": "等待毫秒数，建议500-3000"}
+                    "url": {"type": "string", "description": "要打开的完整URL地址，如 https://www.4399.com"}
+                }, "required": ["url"]}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rapid_click",
+                "description": "在同一坐标位置快速连续点击多次。用于游戏中的快速连点操作（如点击类游戏、采集资源等）。点击间隔约100毫秒。x和y必须各是一个整数。",
+                "parameters": {"type": "object", "properties": {
+                    "x": {"type": "integer", "description": "X坐标(单个整数)"},
+                    "y": {"type": "integer", "description": "Y坐标(单个整数)"},
+                    "count": {"type": "integer", "description": "点击次数，默认5次，建议1-20次"}
+                }, "required": ["x","y","count"]}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "wait",
+                "description": "等待指定毫秒数。用于等待程序打开、页面加载、动画完成、游戏加载等。打开应用建议等待1000-2000ms，网页加载建议等待2000-5000ms，大型游戏加载建议等待5000-10000ms。",
+                "parameters": {"type": "object", "properties": {
+                    "ms": {"type": "integer", "description": "等待毫秒数，建议500-10000"}
                 }, "required": ["ms"]}
             }
         },
@@ -618,6 +742,51 @@ fn execute_tool_call(action: &mut ToolCallInfo, sx: f64, sy: f64) -> Result<Stri
             std::thread::sleep(std::time::Duration::from_millis(2000));
             Ok(format!("已打开应用：{}", name))
         }
+        "open_url" => {
+            let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if url.is_empty() {
+                return Err("URL不能为空".to_string());
+            }
+            #[cfg(target_os = "windows")]
+            {
+                std::process::Command::new("cmd")
+                    .args(["/C", "start", "", &url])
+                    .spawn()
+                    .map_err(|e| format!("Failed to open URL: {}", e))?;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                std::process::Command::new("open")
+                    .arg(&url)
+                    .spawn()
+                    .map_err(|e| format!("Failed to open URL: {}", e))?;
+            }
+            #[cfg(target_os = "linux")]
+            {
+                std::process::Command::new("xdg-open")
+                    .arg(&url)
+                    .spawn()
+                    .map_err(|e| format!("Failed to open URL: {}", e))?;
+            }
+            // Wait for browser to start loading
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+            Ok(format!("已在浏览器中打开：{}", url))
+        }
+        "rapid_click" => {
+            let x = sm.x(args.get("x").and_then(|v| v.as_i64()).unwrap_or(0));
+            let y = sm.y(args.get("y").and_then(|v| v.as_i64()).unwrap_or(0));
+            let count = args.get("count").and_then(|v| v.as_i64()).unwrap_or(5).min(20).max(1) as u32;
+            let mut e = new_agent_enigo()?;
+            smooth_move_to(&mut e, x, y)?;
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            for i in 0..count {
+                e.button(EnigoButton::Left, EnigoDir::Click).map_err(|er| er.to_string())?;
+                if i < count - 1 {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+            Ok(format!("已在({},{})处快速连点{}次", x, y, count))
+        }
         "wait" => {
             let ms = args.get("ms").and_then(|v| v.as_u64()).unwrap_or(500);
             std::thread::sleep(std::time::Duration::from_millis(ms));
@@ -798,6 +967,50 @@ async fn run_agent_loop(
                 "tool_call_id": "fewshot_2",
                 "content": "已从(720,340)拖拽到(720,200)"
             }));
+
+            // Few-shot example 3: Open web game and click start button
+            history.push(serde_json::json!({
+                "role": "user",
+                "content": "请帮我在4399上玩一个连连看游戏。"
+            }));
+            history.push(serde_json::json!({
+                "role": "assistant",
+                "content": "我将先在浏览器中打开4399游戏网站。",
+                "tool_calls": [{
+                    "id": "fewshot_3",
+                    "type": "function",
+                    "function": {
+                        "name": "open_url",
+                        "arguments": "{\"url\": \"https://www.4399.com\"}"
+                    }
+                }]
+            }));
+            history.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "fewshot_3",
+                "content": "已在浏览器中打开：https://www.4399.com"
+            }));
+            history.push(serde_json::json!({
+                "role": "user",
+                "content": "第2步。屏幕：1920x1080像素。任务目标：请帮我在4399上玩一个连连看游戏\n请观察上一步操作的结果，决定下一步操作。"
+            }));
+            history.push(serde_json::json!({
+                "role": "assistant",
+                "content": "我观察到4399网站已加载。我需要先等待页面完全加载，然后在页面上搜索连连看游戏。",
+                "tool_calls": [{
+                    "id": "fewshot_4",
+                    "type": "function",
+                    "function": {
+                        "name": "wait",
+                        "arguments": "{\"ms\": 3000}"
+                    }
+                }]
+            }));
+            history.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "fewshot_4",
+                "content": "已等待3000毫秒"
+            }));
         }
 
         let step_text = if step == 1 {
@@ -844,9 +1057,8 @@ async fn run_agent_loop(
         history.push(serde_json::json!({"role": "user", "content": user_content}));
 
         // History management: keep system + few-shot examples + recent turns.
-        // Few-shot messages are at index 1..7 (2 examples * 3 messages each = 6).
-        // After that, keep last 20 messages (10 turns) for context - longer for sustained tasks.
-        let few_shot_count = 6; // 2 few-shot examples * 3 messages each
+        // Few-shot messages: example 1 (3 msgs) + example 2 (3 msgs) + example 3 (6 msgs) = 12
+        let few_shot_count = 12;
         let max_recent = 20; // Increased from 8 to 20 for sustained task context
         let max_history = 1 + few_shot_count + max_recent;
         if history.len() > max_history {

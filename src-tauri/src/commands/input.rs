@@ -1,6 +1,6 @@
 use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 
-fn new_enigo() -> Result<Enigo, String> {
+pub fn new_enigo_instance() -> Result<Enigo, String> {
     Enigo::new(&Settings::default()).map_err(|e| format!("Enigo init error: {}", e))
 }
 
@@ -44,6 +44,11 @@ fn smooth_move(e: &mut Enigo, from_x: i32, from_y: i32, to_x: i32, to_y: i32) ->
     Ok(())
 }
 
+/// Public wrapper for smooth_move, used by tools.rs
+pub fn smooth_move_pub(e: &mut Enigo, from_x: i32, from_y: i32, to_x: i32, to_y: i32) -> Result<(), String> {
+    smooth_move(e, from_x, from_y, to_x, to_y)
+}
+
 // No restore — cursor stays at target after each action
 
 /// Convert physical pixel coordinates (from xcap screenshot) to logical
@@ -56,7 +61,7 @@ fn smooth_move(e: &mut Enigo, from_x: i32, from_y: i32, to_x: i32, to_y: i32) ->
 ///
 /// This function dynamically reads current screen info each time
 /// to handle multi-monitor and DPI changes correctly.
-fn physical_to_logical(x: i32, y: i32) -> (i32, i32) {
+pub fn physical_to_logical(x: i32, y: i32) -> (i32, i32) {
     let (enigo_w, enigo_h, phys_w, phys_h) = get_coordinate_spaces();
     log::info!(
         "[input] physical_to_logical: GetSystemMetrics={}x{}, xcap_physical={}x{}, input=({},{})",
@@ -125,7 +130,7 @@ pub fn mouse_move(x: i32, y: i32) -> Result<(), String> {
     let (lx, ly) = physical_to_logical(x, y);
     let (cx, cy) = get_cursor_pos();
     log::info!("[input] mouse_move: saved=({},{}), target_phys=({},{}), target_logical=({},{})", cx, cy, x, y, lx, ly);
-    let mut e = new_enigo()?;
+    let mut e = new_enigo_instance()?;
     smooth_move(&mut e, cx, cy, lx, ly)?;
     Ok(())
 }
@@ -135,7 +140,7 @@ pub fn mouse_click(x: i32, y: i32, button: Option<String>) -> Result<(), String>
     let (lx, ly) = physical_to_logical(x, y);
     let (saved_x, saved_y) = get_cursor_pos();
     log::info!("[input] mouse_click: saved=({},{}), target_phys=({},{}), target_logical=({},{})", saved_x, saved_y, x, y, lx, ly);
-    let mut e = new_enigo()?;
+    let mut e = new_enigo_instance()?;
     smooth_move(&mut e, saved_x, saved_y, lx, ly)?;
     std::thread::sleep(std::time::Duration::from_millis(50));
     let btn = parse_button(button.as_deref().unwrap_or("left"));
@@ -149,7 +154,7 @@ pub fn mouse_double_click(x: i32, y: i32) -> Result<(), String> {
     let (lx, ly) = physical_to_logical(x, y);
     let (saved_x, saved_y) = get_cursor_pos();
     log::info!("[input] mouse_double_click: saved=({},{}), target=({},{})", saved_x, saved_y, lx, ly);
-    let mut e = new_enigo()?;
+    let mut e = new_enigo_instance()?;
     smooth_move(&mut e, saved_x, saved_y, lx, ly)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     e.button(Button::Left, Direction::Click)
@@ -166,7 +171,7 @@ pub fn mouse_drag(from_x: i32, from_y: i32, to_x: i32, to_y: i32) -> Result<(), 
     let (tx, ty) = physical_to_logical(to_x, to_y);
     let (saved_x, saved_y) = get_cursor_pos();
     log::info!("[input] mouse_drag: saved=({},{}), from=({},{}), to=({},{})", saved_x, saved_y, fx, fy, tx, ty);
-    let mut e = new_enigo()?;
+    let mut e = new_enigo_instance()?;
 
     smooth_move(&mut e, saved_x, saved_y, fx, fy)?;
     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -199,7 +204,7 @@ pub fn mouse_scroll(x: i32, y: i32, direction: String, amount: i32) -> Result<()
     let (lx, ly) = physical_to_logical(x, y);
     let (saved_x, saved_y) = get_cursor_pos();
     log::info!("[input] mouse_scroll: saved=({},{}), target=({},{})", saved_x, saved_y, lx, ly);
-    let mut e = new_enigo()?;
+    let mut e = new_enigo_instance()?;
     smooth_move(&mut e, saved_x, saved_y, lx, ly)?;
     std::thread::sleep(std::time::Duration::from_millis(30));
 
@@ -215,7 +220,7 @@ pub fn mouse_scroll(x: i32, y: i32, direction: String, amount: i32) -> Result<()
 
 #[tauri::command]
 pub fn keyboard_type(text: String) -> Result<(), String> {
-    let mut e = new_enigo()?;
+    let mut e = new_enigo_instance()?;
     e.text(&text)
         .map_err(|err| format!("type error: {}", err))
 }
@@ -265,7 +270,7 @@ fn parse_key(key: &str) -> Key {
 
 #[tauri::command]
 pub fn keyboard_key(key: String, modifiers: Option<Vec<String>>) -> Result<(), String> {
-    let mut e = new_enigo()?;
+    let mut e = new_enigo_instance()?;
     let mods = modifiers.unwrap_or_default();
     for m in &mods {
         e.key(parse_key(m), Direction::Press)
@@ -304,7 +309,7 @@ pub fn debug_coordinate_info(test_x: i32, test_y: i32) -> Result<String, String>
 
 #[tauri::command]
 pub fn keyboard_hotkey(keys: Vec<String>) -> Result<(), String> {
-    let mut e = new_enigo()?;
+    let mut e = new_enigo_instance()?;
     for k in &keys {
         e.key(parse_key(k), Direction::Press)
             .map_err(|err| format!("hotkey press error: {}", err))?;
@@ -321,7 +326,7 @@ pub fn keyboard_hotkey(keys: Vec<String>) -> Result<(), String> {
 /// Each step is: { "action": "move"|"click"|"press"|"release"|"type"|"key"|"wait", ...params }
 #[tauri::command]
 pub fn action_sequence(steps: Vec<serde_json::Value>) -> Result<String, String> {
-    let mut e = new_enigo()?;
+    let mut e = new_enigo_instance()?;
     let (mut cur_x, mut cur_y) = get_cursor_pos();
     let mut results = Vec::new();
 

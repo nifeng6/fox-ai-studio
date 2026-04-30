@@ -98,6 +98,18 @@ impl ToolRegistry {
             serde_json::json!({"type":"object","properties":{
                 "name":{"type":"string","description":"应用程序名称"}
             },"required":["name"]}));
+        self.reg("open_url", "computer_use",
+            "在默认浏览器中打开指定URL网页。用于访问在线游戏、网站等。比先打开浏览器再输入URL更可靠。",
+            serde_json::json!({"type":"object","properties":{
+                "url":{"type":"string","description":"要打开的完整URL地址"}
+            },"required":["url"]}));
+        self.reg("rapid_click", "computer_use",
+            "在同一坐标位置快速连续点击多次。用于游戏中的快速连点操作（如点击类游戏、采集资源等）。",
+            serde_json::json!({"type":"object","properties":{
+                "x":{"type":"integer","description":"X坐标(单个整数)"},
+                "y":{"type":"integer","description":"Y坐标(单个整数)"},
+                "count":{"type":"integer","default":5,"description":"点击次数，建议1-20次"}
+            },"required":["x","y","count"]}));
         self.reg("action_sequence", "computer_use",
             "原子化执行一系列鼠标/键盘动作，带平滑过渡。用于多步操作如拖拽、下棋等。",
             serde_json::json!({"type":"object","properties":{
@@ -437,6 +449,56 @@ pub async fn execute_tool(tool: &ToolCallInfo) -> Result<String, String> {
             }
             std::thread::sleep(std::time::Duration::from_millis(1500));
             Ok(format!("Opened application: {}", name))
+        }
+        "open_url" => {
+            let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if url.is_empty() { return Err("Empty URL".into()); }
+            #[cfg(target_os = "windows")]
+            {
+                std::process::Command::new("cmd")
+                    .args(["/C", "start", "", &url])
+                    .spawn()
+                    .map_err(|e| format!("Failed to open URL: {}", e))?;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                std::process::Command::new("open")
+                    .arg(&url)
+                    .spawn()
+                    .map_err(|e| format!("Failed to open URL: {}", e))?;
+            }
+            #[cfg(target_os = "linux")]
+            {
+                std::process::Command::new("xdg-open")
+                    .arg(&url)
+                    .spawn()
+                    .map_err(|e| format!("Failed to open URL: {}", e))?;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+            Ok(format!("Opened URL in browser: {}", url))
+        }
+        "rapid_click" => {
+            let x = args.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+            let y = args.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+            let count = args.get("count").and_then(|v| v.as_i64()).unwrap_or(5).min(20).max(1) as u32;
+            let (lx, ly) = crate::commands::input::physical_to_logical(x, y);
+            let (saved_x, saved_y) = {
+                #[cfg(target_os = "windows")]
+                { crate::commands::selection::win::cursor_pos() }
+                #[cfg(not(target_os = "windows"))]
+                { (lx, ly) }
+            };
+            let mut e = crate::commands::input::new_enigo_instance()?;
+            crate::commands::input::smooth_move_pub(&mut e, saved_x, saved_y, lx, ly)?;
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            use enigo::{Button, Direction, Mouse};
+            for i in 0..count {
+                e.button(Button::Left, Direction::Click).map_err(|er| er.to_string())?;
+                if i < count - 1 {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+            Ok(format!("Rapid clicked {} times at ({},{})", count, x, y))
         }
         "action_sequence" => {
             let steps = args.get("steps")
