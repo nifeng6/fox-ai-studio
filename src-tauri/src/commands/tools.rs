@@ -1,4 +1,3 @@
-use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,68 +40,73 @@ impl ToolRegistry {
 
     fn register_computer_use(&mut self) {
         self.reg("screenshot", "computer_use",
-            "Take a screenshot of the current screen and return it for vision analysis",
+            "截取当前屏幕并返回截图用于视觉分析",
             serde_json::json!({"type":"object","properties":{},"required":[]}));
         self.reg("mouse_click", "computer_use",
-            "Click at screen coordinates",
+            "在屏幕坐标(x,y)处点击鼠标。x和y必须各是一个整数。默认左键。",
             serde_json::json!({"type":"object","properties":{
-                "x":{"type":"integer","description":"X pixel coordinate"},
-                "y":{"type":"integer","description":"Y pixel coordinate"},
-                "button":{"type":"string","enum":["left","right","middle"],"default":"left"}
+                "x":{"type":"integer","description":"X坐标(单个整数)"},
+                "y":{"type":"integer","description":"Y坐标(单个整数)"},
+                "button":{"type":"string","enum":["left","right","middle"],"default":"left","description":"鼠标按键，默认left"}
             },"required":["x","y"]}));
         self.reg("mouse_double_click", "computer_use",
-            "Double click at screen coordinates",
+            "在屏幕坐标(x,y)处双击鼠标左键。x和y必须各是一个整数。用于打开文件、启动程序等。",
             serde_json::json!({"type":"object","properties":{
-                "x":{"type":"integer"},"y":{"type":"integer"}
+                "x":{"type":"integer","description":"X坐标(单个整数)"},
+                "y":{"type":"integer","description":"Y坐标(单个整数)"}
             },"required":["x","y"]}));
         self.reg("mouse_move", "computer_use",
-            "Move mouse cursor to coordinates",
+            "移动鼠标光标到指定坐标，不点击",
             serde_json::json!({"type":"object","properties":{
-                "x":{"type":"integer"},"y":{"type":"integer"}
+                "x":{"type":"integer","description":"X坐标"},
+                "y":{"type":"integer","description":"Y坐标"}
             },"required":["x","y"]}));
         self.reg("mouse_drag", "computer_use",
-            "Drag from one point to another",
+            "从起点拖拽到终点。用于移动文件、下棋、调整窗口等。所有坐标必须是单个整数。",
             serde_json::json!({"type":"object","properties":{
-                "from_x":{"type":"integer"},"from_y":{"type":"integer"},
-                "to_x":{"type":"integer"},"to_y":{"type":"integer"}
+                "from_x":{"type":"integer","description":"起点X坐标"},
+                "from_y":{"type":"integer","description":"起点Y坐标"},
+                "to_x":{"type":"integer","description":"终点X坐标"},
+                "to_y":{"type":"integer","description":"终点Y坐标"}
             },"required":["from_x","from_y","to_x","to_y"]}));
         self.reg("mouse_scroll", "computer_use",
-            "Scroll at screen coordinates",
+            "在指定位置滚动鼠标滚轮。direction为up或down，amount为滚动量(1次约等于滚轮一格)。",
             serde_json::json!({"type":"object","properties":{
-                "x":{"type":"integer"},"y":{"type":"integer"},
-                "direction":{"type":"string","enum":["up","down"]},
-                "amount":{"type":"integer","default":3}
+                "x":{"type":"integer","description":"X坐标"},
+                "y":{"type":"integer","description":"Y坐标"},
+                "direction":{"type":"string","enum":["up","down"],"description":"滚动方向"},
+                "amount":{"type":"integer","default":3,"description":"滚动量，默认3"}
             },"required":["x","y","direction","amount"]}));
         self.reg("keyboard_type", "computer_use",
-            "Type a text string via keyboard",
+            "输入文字字符串。支持中英文和各种符号。输入前请确保光标已在目标输入框中。",
             serde_json::json!({"type":"object","properties":{
-                "text":{"type":"string"}
+                "text":{"type":"string","description":"要输入的文字"}
             },"required":["text"]}));
         self.reg("keyboard_key", "computer_use",
-            "Press a single key with optional modifiers (enter, tab, escape, backspace, delete, up, down, left, right, etc.)",
+            "按下单个按键，可带修饰键。常用键：enter, tab, escape, backspace, delete, up, down, left, right, home, end, space, meta(win)。",
             serde_json::json!({"type":"object","properties":{
-                "key":{"type":"string","description":"Key name"},
-                "modifiers":{"type":"array","items":{"type":"string"},"description":"Optional modifier keys: ctrl, alt, shift, meta"}
+                "key":{"type":"string","description":"按键名称"},
+                "modifiers":{"type":"array","items":{"type":"string"},"description":"修饰键列表：ctrl, alt, shift, meta(win)"}
             },"required":["key"]}));
         self.reg("keyboard_hotkey", "computer_use",
-            "Press a key combination simultaneously (e.g. ctrl+c)",
+            "同时按下组合键。例如：复制[\"ctrl\",\"c\"]，粘贴[\"ctrl\",\"v\"]，切换窗口[\"alt\",\"tab\"]，关闭窗口[\"alt\",\"f4\"]，打开资源管理器[\"win\",\"e\"]。",
             serde_json::json!({"type":"object","properties":{
-                "keys":{"type":"array","items":{"type":"string"},"description":"Keys to press together"}
+                "keys":{"type":"array","items":{"type":"string"},"description":"组合键列表，如[\"ctrl\",\"c\"]"}
             },"required":["keys"]}));
         self.reg("open_application", "computer_use",
-            "Open an application by name using the OS launcher",
+            "通过名称打开应用程序，比在桌面找图标更可靠。例如：\"记事本\"、\"计算器\"、\"Chrome\"、\"Word\"。",
             serde_json::json!({"type":"object","properties":{
-                "name":{"type":"string","description":"Application name to open"}
+                "name":{"type":"string","description":"应用程序名称"}
             },"required":["name"]}));
         self.reg("action_sequence", "computer_use",
-            "Execute a sequence of mouse/keyboard actions atomically with smooth human-like transitions. Use for multi-step operations like drag-and-drop, chess piece moves, etc.",
+            "原子化执行一系列鼠标/键盘动作，带平滑过渡。用于多步操作如拖拽、下棋等。",
             serde_json::json!({"type":"object","properties":{
-                "steps":{"type":"array","description":"Array of action steps. Each step: {action, ...params}. Actions: move(x,y), click(x,y,button?), press(x?,y?,button?), release(x?,y?,button?), type(text), key(key,modifiers?), wait(ms)","items":{"type":"object"}}
+                "steps":{"type":"array","description":"动作步骤数组。每步：{action, ...params}。动作：move(x,y), click(x,y,button?), press(x?,y?,button?), release(x?,y?,button?), type(text), key(key,modifiers?), wait(ms)","items":{"type":"object"}}
             },"required":["steps"]}));
         self.reg("wait", "computer_use",
-            "Wait for a specified number of milliseconds",
+            "等待指定毫秒数。用于等待程序打开、页面加载、动画完成等。打开应用后建议等待1000-2000ms。",
             serde_json::json!({"type":"object","properties":{
-                "ms":{"type":"integer","description":"Milliseconds to wait"}
+                "ms":{"type":"integer","description":"等待毫秒数，建议500-3000"}
             },"required":["ms"]}));
     }
 
