@@ -481,15 +481,10 @@ pub async fn execute_tool(tool: &ToolCallInfo) -> Result<String, String> {
             let x = args.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
             let y = args.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
             let count = args.get("count").and_then(|v| v.as_i64()).unwrap_or(5).min(20).max(1) as u32;
-            let (lx, ly) = crate::commands::input::physical_to_logical(x, y);
-            let (saved_x, saved_y) = {
-                #[cfg(target_os = "windows")]
-                { crate::commands::selection::win::cursor_pos() }
-                #[cfg(not(target_os = "windows"))]
-                { (lx, ly) }
-            };
+            // All coordinates are physical pixels — use consistently
+            let (cx, cy) = crate::commands::input::get_cursor_pos_physical();
             let mut e = crate::commands::input::new_enigo_instance()?;
-            crate::commands::input::smooth_move_pub(&mut e, saved_x, saved_y, lx, ly)?;
+            crate::commands::input::smooth_move_pub(&mut e, cx, cy, x, y)?;
             std::thread::sleep(std::time::Duration::from_millis(50));
             use enigo::{Button, Direction, Mouse};
             for i in 0..count {

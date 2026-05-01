@@ -369,17 +369,8 @@ pub fn capture_clean_screenshot(monitor_index: Option<u32>) -> Result<CleanCaptu
     // Draw mouse cursor crosshair at current position for visual reference
     #[cfg(target_os = "windows")]
     {
-        let (cur_x, cur_y) = {
-            let (raw_x, raw_y) = crate::commands::selection::win::cursor_pos();
-            let (enigo_w, enigo_h, xcap_w, xcap_h) = crate::commands::input::get_coordinate_spaces_pub();
-            if xcap_w > 0 && enigo_w > 0 && xcap_w != enigo_w {
-                let sx = xcap_w as f64 / enigo_w as f64;
-                let sy = xcap_h as f64 / enigo_h as f64;
-                ((raw_x as f64 * sx).round() as i32, (raw_y as f64 * sy).round() as i32)
-            } else {
-                (raw_x, raw_y)
-            }
-        };
+        // Get cursor position in physical pixels (matching screenshot coordinate space)
+        let (cur_x, cur_y) = crate::commands::input::get_cursor_pos_physical();
         let cx = cur_x.max(0) as u32;
         let cy = cur_y.max(0) as u32;
         let crosshair_color = xcap::image::Rgba([255u8, 50, 50, 220]); // red crosshair
@@ -414,24 +405,10 @@ pub fn capture_clean_screenshot(monitor_index: Option<u32>) -> Result<CleanCaptu
     let buf = encode_as_jpeg(&dyn_img, 88)?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
 
-    // GetCursorPos returns logical coordinates; we need to convert to physical
-    // pixels to match the screenshot's coordinate space.
+    // Cursor position is already in physical pixels from get_cursor_pos_physical()
+    // (matching the screenshot coordinate space)
     #[cfg(target_os = "windows")]
-    let (cur_x, cur_y) = {
-        let (raw_x, raw_y) = crate::commands::selection::win::cursor_pos();
-        let (enigo_w, enigo_h, xcap_w, xcap_h) = crate::commands::input::get_coordinate_spaces_pub();
-        if xcap_w > 0 && enigo_w > 0 && xcap_w != enigo_w {
-            let sx = xcap_w as f64 / enigo_w as f64;
-            let sy = xcap_h as f64 / enigo_h as f64;
-            let px = (raw_x as f64 * sx).round() as i32;
-            let py = (raw_y as f64 * sy).round() as i32;
-            log::info!("[desktop] cursor logical({},{}) → physical({},{}) scale=({:.3},{:.3})", raw_x, raw_y, px, py, sx, sy);
-            (px, py)
-        } else {
-            log::info!("[desktop] cursor=({},{}) no DPI scale", raw_x, raw_y);
-            (raw_x, raw_y)
-        }
-    };
+    let (cur_x, cur_y) = crate::commands::input::get_cursor_pos_physical();
     #[cfg(not(target_os = "windows"))]
     let (cur_x, cur_y) = (0i32, 0i32);
 
@@ -934,13 +911,9 @@ fn get_desktop_icons() -> Vec<String> {
     let remote_lvitem = remote_base;
     let remote_text_buf = unsafe { (remote_base as *mut u8).add(std::mem::size_of::<LVITEMW>()) as *mut u16 };
 
-    // Step 9: Get DPI scale info for coordinate conversion
-    let (enigo_w, enigo_h, phys_w, phys_h) = crate::commands::input::get_coordinate_spaces_pub();
-    let dpi_scale_x = if enigo_w > 0 && phys_w > enigo_w { phys_w as f64 / enigo_w as f64 } else { 1.0 };
-    let dpi_scale_y = if enigo_h > 0 && phys_h > enigo_h { phys_h as f64 / enigo_h as f64 } else { 1.0 };
-
-    log::info!("[desktop_icons] DPI scale: x={:.3}, y={:.3} (enigo={}x{}, phys={}x{})",
-               dpi_scale_x, dpi_scale_y, enigo_w, enigo_h, phys_w, phys_h);
+    // Step 9: Log DPI scale info for debugging
+    let (dpi_sx, dpi_sy) = crate::commands::input::get_dpi_scale();
+    log::info!("[desktop_icons] DPI scale: x={:.3}, y={:.3}", dpi_sx, dpi_sy);
 
     // Step 10: Enumerate each desktop icon
     let max_icons = count.min(50);
@@ -1022,26 +995,23 @@ fn get_desktop_icons() -> Vec<String> {
             format!("Icon_{}", i)
         };
 
-        // Desktop icon center: the position from LVM_GETITEMPOSITION is the top-left
-        // of the icon's text area. The actual icon center is roughly:
-        // x: same (icon is centered horizontally above the text)
-        // y: about 25-30 pixels above the text position (icon height ~48px, text ~16px)
-        // But for clicking, the icon center (including the image above text) is better.
-        // We estimate the full icon center by moving y up by ~25 pixels.
-        let icon_center_x = screen_pt.x + 37;  // typical icon width ~75px, center offset ~37
-        let icon_center_y = screen_pt.y - 5;    // position is top of text, icon center is a bit above
+        // Desktop icon center: ClientToScreen returns logical coordinates.
+        // The position from LVM_GETITEMPOSITION is the top-left of the icon's text area.
+        // Desktop icon dimensions in LOGICAL pixels: icon image ~75x48, text ~16px high
+        // Icon center (visual center of the icon image) is approximately:
+        let icon_center_logical_x = screen_pt.x + 37;  // typical icon width ~75px, center offset ~37 (logical)
+        let icon_center_logical_y = screen_pt.y + 24;   // center of full icon (image + text, ~48px high)
 
         // Convert from logical to physical coordinates to match screenshot
-        let phys_x = (icon_center_x as f64 * dpi_scale_x).round() as i32;
-        let phys_y = (icon_center_y as f64 * dpi_scale_y).round() as i32;
+        let (phys_x, phys_y) = crate::commands::input::logical_to_physical(icon_center_logical_x, icon_center_logical_y);
 
         icons.push(format!(
             "[桌面图标] \"{}\" at ({},{})",
             name, phys_x, phys_y
         ));
 
-        log::info!("[desktop_icons] Icon {}: '{}' client=({},{}) screen=({},{}) phys=({},{})",
-                   i, name, pt.x, pt.y, icon_center_x, icon_center_y, phys_x, phys_y);
+        log::info!("[desktop_icons] Icon {}: '{}' client=({},{}) screen_logical=({},{}) phys=({},{})",
+                   i, name, pt.x, pt.y, icon_center_logical_x, icon_center_logical_y, phys_x, phys_y);
     }
 
     // Cleanup
@@ -1159,18 +1129,14 @@ pub fn get_screen_elements() -> Result<String, String> {
             let cx = (rect.left + rect.right) / 2;
             let cy = (rect.top + rect.bottom) / 2;
 
-            // Convert logical to physical coordinates
-            let (enigo_w, enigo_h, phys_w, phys_h) = crate::commands::input::get_coordinate_spaces_pub();
-            let dpi_scale_x = if enigo_w > 0 && phys_w > enigo_w { phys_w as f64 / enigo_w as f64 } else { 1.0 };
-            let dpi_scale_y = if enigo_h > 0 && phys_h > enigo_h { phys_h as f64 / enigo_h as f64 } else { 1.0 };
-            let phys_cx = (cx as f64 * dpi_scale_x).round() as i32;
-            let phys_cy = (cy as f64 * dpi_scale_y).round() as i32;
+            // GetWindowRect returns logical coordinates — convert to physical
+            let (phys_cx, phys_cy) = crate::commands::input::logical_to_physical(cx, cy);
+            let phys_w = ((rect.right - rect.left) as f64 * crate::commands::input::get_dpi_scale().0).round() as i32;
+            let phys_h = ((rect.bottom - rect.top) as f64 * crate::commands::input::get_dpi_scale().1).round() as i32;
 
             col.elements.push(format!(
                 "\"{}\" at ({},{}) size {}x{}",
-                title, phys_cx, phys_cy,
-                ((rect.right - rect.left) as f64 * dpi_scale_x).round() as i32,
-                ((rect.bottom - rect.top) as f64 * dpi_scale_y).round() as i32
+                title, phys_cx, phys_cy, phys_w, phys_h
             ));
 
             if col.elements.len() >= 80 { return 0; }

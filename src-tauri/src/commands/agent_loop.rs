@@ -492,41 +492,37 @@ use enigo::{
     Enigo as EnigoInstance, Mouse as EnigoMouse, Settings as EnigoSettings,
 };
 
-/// Map AI's screenshot coordinate to the logical screen coordinate that Enigo expects.
-fn map_to_screen(v: i64, img_scale: f64, phys_size: u32, logical_size: u32) -> i32 {
-    let physical = (v as f64 * img_scale).round() as i32;
-    if logical_size == 0 || phys_size == 0 || logical_size == phys_size {
-        return physical;
-    }
-    let dpi_scale = phys_size as f64 / logical_size as f64;
-    (physical as f64 / dpi_scale).round() as i32
+/// Map AI's screenshot coordinate directly to physical pixel coordinate.
+/// Since screenshots are in physical pixels and Enigo Coordinate::Abs in a
+/// DPI-aware process also uses physical pixels, we pass through unchanged.
+/// The img_scale is kept for future downscaling support but is currently 1.0.
+fn map_to_screen(v: i64, img_scale: f64, _phys_size: u32, _logical_size: u32) -> i32 {
+    // AI coordinates are in physical pixel space (matching screenshot).
+    // Enigo Coordinate::Abs in DPI-aware process uses physical pixels.
+    // So we just apply image scaling (if any) and pass through.
+    (v as f64 * img_scale).round() as i32
 }
 
 struct ScreenMapping {
     img_sx: f64,
     img_sy: f64,
-    phys_w: u32,
-    phys_h: u32,
-    logical_w: u32,
-    logical_h: u32,
 }
 
 impl ScreenMapping {
     fn new(img_sx: f64, img_sy: f64) -> Self {
-        let (logical_w, logical_h, phys_w, phys_h) = crate::commands::input::get_coordinate_spaces_pub();
         log::info!(
-            "[agent_loop] ScreenMapping: img_scale=({:.2},{:.2}), logical={}x{}, phys={}x{}",
-            img_sx, img_sy, logical_w, logical_h, phys_w, phys_h
+            "[agent_loop] ScreenMapping: img_scale=({:.2},{:.2}) — all coords in physical pixels",
+            img_sx, img_sy
         );
-        Self { img_sx, img_sy, phys_w, phys_h, logical_w, logical_h }
+        Self { img_sx, img_sy }
     }
 
     fn x(&self, v: i64) -> i32 {
-        map_to_screen(v, self.img_sx, self.phys_w, self.logical_w)
+        (v as f64 * self.img_sx).round() as i32
     }
 
     fn y(&self, v: i64) -> i32 {
-        map_to_screen(v, self.img_sy, self.phys_h, self.logical_h)
+        (v as f64 * self.img_sy).round() as i32
     }
 }
 
@@ -534,11 +530,12 @@ fn new_agent_enigo() -> Result<EnigoInstance, String> {
     EnigoInstance::new(&EnigoSettings::default()).map_err(|e| format!("Enigo init: {}", e))
 }
 
-/// Smoothly move mouse from current position to target (tx, ty) in logical coordinates.
+/// Smoothly move mouse from current position to target (tx, ty) in physical pixel coordinates.
 /// Simulates human-like cursor movement with an ease-in-out curve.
 fn smooth_move_to(e: &mut EnigoInstance, tx: i32, ty: i32) -> Result<(), String> {
+    // Get cursor position in PHYSICAL pixels (matching screenshot/Enigo coordinate space)
     #[cfg(target_os = "windows")]
-    let (cx, cy) = crate::commands::selection::win::cursor_pos();
+    let (cx, cy) = crate::commands::input::get_cursor_pos_physical();
     #[cfg(not(target_os = "windows"))]
     let (cx, cy) = (tx, ty);
 

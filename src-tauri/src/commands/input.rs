@@ -51,46 +51,97 @@ pub fn smooth_move_pub(e: &mut Enigo, from_x: i32, from_y: i32, to_x: i32, to_y:
 
 // No restore — cursor stays at target after each action
 
-/// Convert physical pixel coordinates (from xcap screenshot) to logical
-/// coordinates that Enigo expects.
-///
-/// On Windows with DPI scaling:
-///   - xcap captures at physical pixel resolution (e.g. 2560x1440)
-///   - GetSystemMetrics returns logical resolution (e.g. 1707x960 at 150% DPI)
-///   - Enigo operates in logical coordinate space
-///
-/// This function dynamically reads current screen info each time
-/// to handle multi-monitor and DPI changes correctly.
-pub fn physical_to_logical(x: i32, y: i32) -> (i32, i32) {
-    let (enigo_w, enigo_h, phys_w, phys_h) = get_coordinate_spaces();
-    log::info!(
-        "[input] physical_to_logical: GetSystemMetrics={}x{}, xcap_physical={}x{}, input=({},{})",
-        enigo_w, enigo_h, phys_w, phys_h, x, y
-    );
-
-    // Enigo uses GetSystemMetrics internally for Coordinate::Abs.
-    // In a DPI-aware process (like Tauri), GetSystemMetrics returns the
-    // physical resolution, so enigo_w == phys_w and no extra scaling is needed.
-    // We only need to convert if they genuinely differ.
-    if enigo_w == 0 || phys_w == 0 || (enigo_w == phys_w && enigo_h == phys_h) {
-        log::info!("[input] SystemMetrics==xcap ({}x{}), no DPI scaling. Passing ({},{}) to Enigo.", enigo_w, enigo_h, x, y);
-        return (x, y);
-    }
-
-    let scale_x = phys_w as f64 / enigo_w as f64;
-    let scale_y = phys_h as f64 / enigo_h as f64;
-    let lx = (x as f64 / scale_x).round() as i32;
-    let ly = (y as f64 / scale_y).round() as i32;
-    log::info!(
-        "[input] DPI scaling active! xcap={}x{}, SystemMetrics={}x{}, scale=({:.4},{:.4}). ({},{}) → ({},{})",
-        phys_w, phys_h, enigo_w, enigo_h, scale_x, scale_y, x, y, lx, ly
-    );
-    (lx, ly)
-}
-
 /// Returns (enigo_screen_w, enigo_screen_h, xcap_physical_w, xcap_physical_h).
 pub fn get_coordinate_spaces_pub() -> (u32, u32, u32, u32) {
     get_coordinate_spaces()
+}
+
+/// Get the actual DPI scale factor of the primary monitor.
+/// Returns (scale_x, scale_y) where scale > 1.0 means physical > logical.
+///
+/// CRITICAL: On Windows 10/11 with display scaling (e.g. 125%, 150%):
+/// - In a DPI-aware process (which Tauri 2 is by default), GetSystemMetrics
+///   returns PHYSICAL pixel dimensions (matching xcap).
+/// - But GetCursorPos() and GetWindowRect() return LOGICAL coordinates
+///   (scaled down by the DPI factor).
+/// - xcap screenshots are always in PHYSICAL pixels.
+/// - Enigo's Coordinate::Abs uses PHYSICAL pixels in a DPI-aware process.
+///
+/// So the correct approach is:
+///   1. AI coordinates come from physical-pixel screenshots → already physical
+///   2. GetCursorPos() returns logical → must convert to physical
+///   3. Enigo move_mouse(Abs) expects physical → no conversion needed
+///   4. GetWindowRect returns logical → must convert to physical
+pub fn get_dpi_scale() -> (f64, f64) {
+    #[cfg(target_os = "windows")]
+    {
+        // Use the actual monitor DPI via GetDeviceCaps to get the true scale
+        extern "system" {
+            fn GetDC(hwnd: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+            fn ReleaseDC(hwnd: *mut std::ffi::c_void, hdc: *mut std::ffi::c_void) -> i32;
+            fn GetDeviceCaps(hdc: *mut std::ffi::c_void, index: i32) -> i32;
+        }
+        const LOGPIXELSX: i32 = 88;
+        const LOGPIXELSY: i32 = 90;
+
+        let hdc = unsafe { GetDC(std::ptr::null_mut()) };
+        if hdc.is_null() {
+            log::warn!("[input] GetDC failed, assuming 1.0 DPI scale");
+            return (1.0, 1.0);
+        }
+        let dpi_x = unsafe { GetDeviceCaps(hdc, LOGPIXELSX) } as f64;
+        let dpi_y = unsafe { GetDeviceCaps(hdc, LOGPIXELSY) } as f64;
+        unsafe { ReleaseDC(std::ptr::null_mut(), hdc); }
+
+        let scale_x = dpi_x / 96.0;
+        let scale_y = dpi_y / 96.0;
+        log::info!("[input] DPI scale from GetDeviceCaps: ({:.3}, {:.3}) (DPI={:.0}x{:.0})", scale_x, scale_y, dpi_x, dpi_y);
+        (scale_x, scale_y)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        (1.0, 1.0)
+    }
+}
+
+/// Convert logical coordinates (from GetCursorPos/GetWindowRect) to
+/// physical pixel coordinates (matching xcap screenshots).
+pub fn logical_to_physical(x: i32, y: i32) -> (i32, i32) {
+    let (sx, sy) = get_dpi_scale();
+    if sx == 1.0 && sy == 1.0 {
+        return (x, y);
+    }
+    let px = (x as f64 * sx).round() as i32;
+    let py = (y as f64 * sy).round() as i32;
+    log::info!("[input] logical_to_physical: ({},{}) → ({},{}) scale=({:.3},{:.3})", x, y, px, py, sx, sy);
+    (px, py)
+}
+
+/// Convert physical pixel coordinates (from xcap screenshots / AI) to
+/// logical coordinates (for APIs that expect logical, like GetCursorPos).
+pub fn physical_to_logical(x: i32, y: i32) -> (i32, i32) {
+    let (sx, sy) = get_dpi_scale();
+    if sx == 1.0 && sy == 1.0 {
+        return (x, y);
+    }
+    let lx = (x as f64 / sx).round() as i32;
+    let ly = (y as f64 / sy).round() as i32;
+    log::info!("[input] physical_to_logical: ({},{}) → ({},{}) scale=({:.3},{:.3})", x, y, lx, ly, sx, sy);
+    (lx, ly)
+}
+
+/// Get current cursor position in PHYSICAL pixel coordinates.
+/// This is the correct coordinate space for xcap screenshots and Enigo Abs.
+pub fn get_cursor_pos_physical() -> (i32, i32) {
+    #[cfg(target_os = "windows")]
+    {
+        let (lx, ly) = crate::commands::selection::win::cursor_pos();
+        logical_to_physical(lx, ly)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        (0, 0)
+    }
 }
 
 fn get_coordinate_spaces() -> (u32, u32, u32, u32) {
@@ -127,71 +178,81 @@ fn parse_button(btn: &str) -> Button {
 
 #[tauri::command]
 pub fn mouse_move(x: i32, y: i32) -> Result<(), String> {
-    let (lx, ly) = physical_to_logical(x, y);
-    let (cx, cy) = get_cursor_pos();
-    log::info!("[input] mouse_move: saved=({},{}), target_phys=({},{}), target_logical=({},{})", cx, cy, x, y, lx, ly);
+    // x, y come from AI as physical pixel coordinates (matching screenshot)
+    // Enigo Coordinate::Abs in DPI-aware process also uses physical coordinates
+    // So we pass them directly, but must convert cursor pos to physical first
+    let (cx, cy) = get_cursor_pos_physical();
+    log::info!("[input] mouse_move: cursor_phys=({},{}), target_phys=({},{})", cx, cy, x, y);
     let mut e = new_enigo_instance()?;
-    smooth_move(&mut e, cx, cy, lx, ly)?;
+    smooth_move(&mut e, cx, cy, x, y)?;
     Ok(())
 }
 
 #[tauri::command]
 pub fn mouse_click(x: i32, y: i32, button: Option<String>) -> Result<(), String> {
-    let (lx, ly) = physical_to_logical(x, y);
-    let (saved_x, saved_y) = get_cursor_pos();
-    log::info!("[input] mouse_click: saved=({},{}), target_phys=({},{}), target_logical=({},{})", saved_x, saved_y, x, y, lx, ly);
+    let (cx, cy) = get_cursor_pos_physical();
+    log::info!("[input] mouse_click: cursor_phys=({},{}), target_phys=({},{})", cx, cy, x, y);
     let mut e = new_enigo_instance()?;
-    smooth_move(&mut e, saved_x, saved_y, lx, ly)?;
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    smooth_move(&mut e, cx, cy, x, y)?;
+    // Wait for mouse to settle at target position
+    std::thread::sleep(std::time::Duration::from_millis(60));
     let btn = parse_button(button.as_deref().unwrap_or("left"));
     e.button(btn, Direction::Click)
         .map_err(|err| format!("click: {}", err))?;
+    // Verify the click landed
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    let (final_x, final_y) = get_cursor_pos_physical();
+    log::info!("[input] mouse_click: final cursor=({},{})", final_x, final_y);
     Ok(())
 }
 
 #[tauri::command]
 pub fn mouse_double_click(x: i32, y: i32) -> Result<(), String> {
-    let (lx, ly) = physical_to_logical(x, y);
-    let (saved_x, saved_y) = get_cursor_pos();
-    log::info!("[input] mouse_double_click: saved=({},{}), target=({},{})", saved_x, saved_y, lx, ly);
+    let (cx, cy) = get_cursor_pos_physical();
+    log::info!("[input] mouse_double_click: cursor_phys=({},{}), target_phys=({},{})", cx, cy, x, y);
     let mut e = new_enigo_instance()?;
-    smooth_move(&mut e, saved_x, saved_y, lx, ly)?;
-    std::thread::sleep(std::time::Duration::from_millis(40));
+    smooth_move(&mut e, cx, cy, x, y)?;
+    // Wait longer for mouse to settle before clicking
+    std::thread::sleep(std::time::Duration::from_millis(80));
     e.button(Button::Left, Direction::Click)
         .map_err(|err| format!("click1: {}", err))?;
-    std::thread::sleep(std::time::Duration::from_millis(60));
+    // Windows double-click requires ~100ms gap between clicks
+    std::thread::sleep(std::time::Duration::from_millis(100));
     e.button(Button::Left, Direction::Click)
         .map_err(|err| format!("click2: {}", err))?;
+    // Verify cursor landed at target
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let (final_x, final_y) = get_cursor_pos_physical();
+    log::info!("[input] mouse_double_click: final cursor=({},{})", final_x, final_y);
     Ok(())
 }
 
 #[tauri::command]
 pub fn mouse_drag(from_x: i32, from_y: i32, to_x: i32, to_y: i32) -> Result<(), String> {
-    let (fx, fy) = physical_to_logical(from_x, from_y);
-    let (tx, ty) = physical_to_logical(to_x, to_y);
-    let (saved_x, saved_y) = get_cursor_pos();
-    log::info!("[input] mouse_drag: saved=({},{}), from=({},{}), to=({},{})", saved_x, saved_y, fx, fy, tx, ty);
+    // All coordinates are already physical pixels — pass directly to Enigo
+    let (cx, cy) = get_cursor_pos_physical();
+    log::info!("[input] mouse_drag: cursor_phys=({},{}), from=({},{}), to=({},{})", cx, cy, from_x, from_y, to_x, to_y);
     let mut e = new_enigo_instance()?;
 
-    smooth_move(&mut e, saved_x, saved_y, fx, fy)?;
+    smooth_move(&mut e, cx, cy, from_x, from_y)?;
     std::thread::sleep(std::time::Duration::from_millis(50));
     e.button(Button::Left, Direction::Press)
         .map_err(|err| format!("press: {}", err))?;
     std::thread::sleep(std::time::Duration::from_millis(40));
 
-    let dx = (tx - fx) as f64;
-    let dy = (ty - fy) as f64;
+    let dx = (to_x - from_x) as f64;
+    let dy = (to_y - from_y) as f64;
     let steps = 20;
     for i in 1..=steps {
         let t = i as f64 / steps as f64;
         let ease = t * t * (3.0 - 2.0 * t);
-        let cx = fx + (dx * ease).round() as i32;
-        let cy = fy + (dy * ease).round() as i32;
-        e.move_mouse(cx, cy, Coordinate::Abs)
+        let ix = from_x + (dx * ease).round() as i32;
+        let iy = from_y + (dy * ease).round() as i32;
+        e.move_mouse(ix, iy, Coordinate::Abs)
             .map_err(|err| format!("drag step: {}", err))?;
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    e.move_mouse(tx, ty, Coordinate::Abs)
+    e.move_mouse(to_x, to_y, Coordinate::Abs)
         .map_err(|err| format!("drag final: {}", err))?;
     std::thread::sleep(std::time::Duration::from_millis(30));
     e.button(Button::Left, Direction::Release)
@@ -201,11 +262,10 @@ pub fn mouse_drag(from_x: i32, from_y: i32, to_x: i32, to_y: i32) -> Result<(), 
 
 #[tauri::command]
 pub fn mouse_scroll(x: i32, y: i32, direction: String, amount: i32) -> Result<(), String> {
-    let (lx, ly) = physical_to_logical(x, y);
-    let (saved_x, saved_y) = get_cursor_pos();
-    log::info!("[input] mouse_scroll: saved=({},{}), target=({},{})", saved_x, saved_y, lx, ly);
+    let (cx, cy) = get_cursor_pos_physical();
+    log::info!("[input] mouse_scroll: cursor_phys=({},{}), target_phys=({},{})", cx, cy, x, y);
     let mut e = new_enigo_instance()?;
-    smooth_move(&mut e, saved_x, saved_y, lx, ly)?;
+    smooth_move(&mut e, cx, cy, x, y)?;
     std::thread::sleep(std::time::Duration::from_millis(30));
 
     let scroll_amount = match direction.as_str() {
@@ -288,20 +348,22 @@ pub fn keyboard_key(key: String, modifiers: Option<Vec<String>>) -> Result<(), S
 #[tauri::command]
 pub fn debug_coordinate_info(test_x: i32, test_y: i32) -> Result<String, String> {
     let (sys_w, sys_h, phys_w, phys_h) = get_coordinate_spaces();
+    let (dpi_sx, dpi_sy) = get_dpi_scale();
     let (lx, ly) = physical_to_logical(test_x, test_y);
+    let (cursor_lx, cursor_ly) = get_cursor_pos();
+    let (cursor_px, cursor_py) = get_cursor_pos_physical();
 
     let info = format!(
-        "GetSystemMetrics: {}x{}\n\
-         xcap physical: {}x{}\n\
-         DPI same: {}\n\
-         Input physical ({},{}) -> Enigo logical ({},{})\n\
-         Scale factor: {:.3}x{:.3}",
-        sys_w, sys_h,
-        phys_w, phys_h,
-        sys_w == phys_w && sys_h == phys_h,
+        "=== Fox AI Coordinate Debug ===\n\
+         Screen: GetSystemMetrics={}x{}, xcap_physical={}x{}\n\
+         DPI scale: {:.3}x{:.3} (from GetDeviceCaps)\n\
+         Physical ({},{}) → Logical ({},{})\n\
+         Cursor logical: ({},{}) → physical: ({},{})\n\
+         Enigo uses: physical coordinates (DPI-aware process)",
+        sys_w, sys_h, phys_w, phys_h,
+        dpi_sx, dpi_sy,
         test_x, test_y, lx, ly,
-        if sys_w > 0 { phys_w as f64 / sys_w as f64 } else { 1.0 },
-        if sys_h > 0 { phys_h as f64 / sys_h as f64 } else { 1.0 },
+        cursor_lx, cursor_ly, cursor_px, cursor_py,
     );
     log::info!("[debug_coordinate_info]\n{}", info);
     Ok(info)
@@ -327,31 +389,32 @@ pub fn keyboard_hotkey(keys: Vec<String>) -> Result<(), String> {
 #[tauri::command]
 pub fn action_sequence(steps: Vec<serde_json::Value>) -> Result<String, String> {
     let mut e = new_enigo_instance()?;
-    let (mut cur_x, mut cur_y) = get_cursor_pos();
+    let (mut cur_x, mut cur_y) = get_cursor_pos_physical();
     let mut results = Vec::new();
 
     for (i, step) in steps.iter().enumerate() {
         let action = step.get("action").and_then(|v| v.as_str()).unwrap_or("");
-        log::info!("[action_seq] step {}: action={}, cursor=({},{})", i, action, cur_x, cur_y);
+        log::info!("[action_seq] step {}: action={}, cursor_phys=({},{})", i, action, cur_x, cur_y);
 
         match action {
             "move" => {
                 let x = step.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
                 let y = step.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                let (lx, ly) = physical_to_logical(x, y);
-                smooth_move(&mut e, cur_x, cur_y, lx, ly)?;
-                cur_x = lx;
-                cur_y = ly;
-                results.push(format!("moved to ({},{})", lx, ly));
+                // x, y are physical pixels from AI — pass directly
+                smooth_move(&mut e, cur_x, cur_y, x, y)?;
+                cur_x = x;
+                cur_y = y;
+                results.push(format!("moved to ({},{})", x, y));
             }
             "click" => {
                 let btn_str = step.get("button").and_then(|v| v.as_str()).unwrap_or("left");
                 let btn = parse_button(btn_str);
                 if let (Some(x), Some(y)) = (step.get("x").and_then(|v| v.as_i64()), step.get("y").and_then(|v| v.as_i64())) {
-                    let (lx, ly) = physical_to_logical(x as i32, y as i32);
-                    smooth_move(&mut e, cur_x, cur_y, lx, ly)?;
-                    cur_x = lx;
-                    cur_y = ly;
+                    let x = x as i32;
+                    let y = y as i32;
+                    smooth_move(&mut e, cur_x, cur_y, x, y)?;
+                    cur_x = x;
+                    cur_y = y;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(40));
                 e.button(btn, Direction::Click).map_err(|er| format!("click: {}", er))?;
@@ -361,10 +424,11 @@ pub fn action_sequence(steps: Vec<serde_json::Value>) -> Result<String, String> 
                 let btn_str = step.get("button").and_then(|v| v.as_str()).unwrap_or("left");
                 let btn = parse_button(btn_str);
                 if let (Some(x), Some(y)) = (step.get("x").and_then(|v| v.as_i64()), step.get("y").and_then(|v| v.as_i64())) {
-                    let (lx, ly) = physical_to_logical(x as i32, y as i32);
-                    smooth_move(&mut e, cur_x, cur_y, lx, ly)?;
-                    cur_x = lx;
-                    cur_y = ly;
+                    let x = x as i32;
+                    let y = y as i32;
+                    smooth_move(&mut e, cur_x, cur_y, x, y)?;
+                    cur_x = x;
+                    cur_y = y;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(30));
                 e.button(btn, Direction::Press).map_err(|er| format!("press: {}", er))?;
@@ -374,10 +438,11 @@ pub fn action_sequence(steps: Vec<serde_json::Value>) -> Result<String, String> 
                 let btn_str = step.get("button").and_then(|v| v.as_str()).unwrap_or("left");
                 let btn = parse_button(btn_str);
                 if let (Some(x), Some(y)) = (step.get("x").and_then(|v| v.as_i64()), step.get("y").and_then(|v| v.as_i64())) {
-                    let (lx, ly) = physical_to_logical(x as i32, y as i32);
-                    smooth_move(&mut e, cur_x, cur_y, lx, ly)?;
-                    cur_x = lx;
-                    cur_y = ly;
+                    let x = x as i32;
+                    let y = y as i32;
+                    smooth_move(&mut e, cur_x, cur_y, x, y)?;
+                    cur_x = x;
+                    cur_y = y;
                 }
                 e.button(btn, Direction::Release).map_err(|er| format!("release: {}", er))?;
                 results.push(format!("released {} at ({},{})", btn_str, cur_x, cur_y));
