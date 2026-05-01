@@ -41,9 +41,9 @@ struct ParsedMessage {
 // ── State ──
 
 pub struct GatewayHandle {
-    shutdown_tx: Option<oneshot::Sender<()>>,
-    port: u16,
-    running: bool,
+    pub shutdown_tx: Option<oneshot::Sender<()>>,
+    pub port: u16,
+    pub running: bool,
 }
 
 pub struct GatewayState(pub Arc<Mutex<GatewayHandle>>);
@@ -134,7 +134,7 @@ fn parse_dingtalk_message(body: &serde_json::Value) -> Option<ParsedMessage> {
 
 fn parse_wecom_message(body: &serde_json::Value) -> Option<ParsedMessage> {
     let content = body.get("Content")?.as_str()?.to_string();
-    let user_id = body.get("FromUserName")?.as_str()?.unwrap_or("unknown").to_string();
+    let user_id = body.get("FromUserName")?.as_str().unwrap_or("unknown").to_string();
 
     Some(ParsedMessage {
         platform: "wecom".to_string(),
@@ -204,38 +204,46 @@ async fn handle_incoming_message(
 
     log::info!("[gateway] Parsed message from {} user={}: {}", parsed.platform, parsed.user_id, parsed.content);
 
-    // Check if user is allowed
-    let configs = configs_state.0.lock().unwrap();
-    let config = configs.values().find(|c| c.platform_id == platform && c.enabled);
-    if let Some(cfg) = config {
-        if let Some(allowed) = &cfg.allowed_users {
-            if !allowed.is_empty() && !allowed.contains(&parsed.user_id) {
-                log::warn!("[gateway] User {} not in allowed list", parsed.user_id);
-                return axum::Json(serde_json::json!({"status": "forbidden"}));
+    // Check if user is allowed and extract needed data before any await
+    let notification_to_send = {
+        let configs = configs_state.0.lock().unwrap();
+        let config = configs.values().find(|c| c.platform_id == platform && c.enabled);
+        match config {
+            Some(cfg) => {
+                if let Some(allowed) = &cfg.allowed_users {
+                    if !allowed.is_empty() && !allowed.contains(&parsed.user_id) {
+                        log::warn!("[gateway] User {} not in allowed list", parsed.user_id);
+                        return axum::Json(serde_json::json!({"status": "forbidden"}));
+                    }
+                }
+
+                if cfg.auto_create_task {
+                    let _ = app.emit("gateway:incoming_message", serde_json::json!({
+                        "platform": parsed.platform,
+                        "userId": parsed.user_id,
+                        "content": parsed.content,
+                    }));
+
+                    let confirm_msg = format!("🦊 已收到指令，正在执行：{}", parsed.content);
+                    Some(ChannelNotification {
+                        platform_id: cfg.platform_id.clone(),
+                        webhook_url: cfg.webhook_url.clone(),
+                        secret: cfg.secret.clone(),
+                        content: confirm_msg,
+                    })
+                } else {
+                    None
+                }
+            }
+            None => {
+                log::warn!("[gateway] No enabled config for platform {}", platform);
+                None
             }
         }
+    };
 
-        // Auto-create task if configured
-        if cfg.auto_create_task {
-            let _ = app.emit("gateway:incoming_message", serde_json::json!({
-                "platform": parsed.platform,
-                "userId": parsed.user_id,
-                "content": parsed.content,
-            }));
-
-            // Send confirmation back to platform
-            let confirm_msg = format!("🦊 已收到指令，正在执行：{}", parsed.content);
-            let notification = ChannelNotification {
-                platform_id: cfg.platform_id.clone(),
-                webhook_url: cfg.webhook_url.clone(),
-                secret: cfg.secret.clone(),
-                content: confirm_msg,
-            };
-            drop(configs);
-            let _ = send_channel_notification(notification).await;
-        }
-    } else {
-        log::warn!("[gateway] No enabled config for platform {}", platform);
+    if let Some(notification) = notification_to_send {
+        let _ = send_channel_notification(notification).await;
     }
 
     axum::Json(serde_json::json!({"status": "ok"}))
@@ -249,42 +257,45 @@ async fn health_handler() -> axum::Json<serde_json::Value> {
     }))
 }
 
-// Axum State type: (Arc<AppHandle>, Arc<Mutex<HashMap<String, PlatformConfig>>>)
-type GatewaySharedState = (Arc<AppHandle>, Arc<Mutex<HashMap<String, PlatformConfig>>>);
+#[derive(Clone)]
+struct SharedGatewayState {
+    app: Arc<AppHandle>,
+    configs: Arc<Mutex<HashMap<String, PlatformConfig>>>,
+}
 
 async fn gateway_feishu_handler(
-    axum::State(state): axum::State<GatewaySharedState>,
+    axum::extract::State(state): axum::extract::State<SharedGatewayState>,
     body: axum::Json<serde_json::Value>,
 ) -> axum::Json<serde_json::Value> {
-    let app = (*state.0).clone();
-    let configs = PlatformConfigsState(Arc::clone(&state.1));
+    let app = (*state.app).clone();
+    let configs = PlatformConfigsState(state.configs);
     handle_incoming_message("feishu".to_string(), body.0, app, configs).await
 }
 
 async fn gateway_dingtalk_handler(
-    axum::State(state): axum::State<GatewaySharedState>,
+    axum::extract::State(state): axum::extract::State<SharedGatewayState>,
     body: axum::Json<serde_json::Value>,
 ) -> axum::Json<serde_json::Value> {
-    let app = (*state.0).clone();
-    let configs = PlatformConfigsState(Arc::clone(&state.1));
+    let app = (*state.app).clone();
+    let configs = PlatformConfigsState(state.configs);
     handle_incoming_message("dingtalk".to_string(), body.0, app, configs).await
 }
 
 async fn gateway_wecom_handler(
-    axum::State(state): axum::State<GatewaySharedState>,
+    axum::extract::State(state): axum::extract::State<SharedGatewayState>,
     body: axum::Json<serde_json::Value>,
 ) -> axum::Json<serde_json::Value> {
-    let app = (*state.0).clone();
-    let configs = PlatformConfigsState(Arc::clone(&state.1));
+    let app = (*state.app).clone();
+    let configs = PlatformConfigsState(state.configs);
     handle_incoming_message("wecom".to_string(), body.0, app, configs).await
 }
 
 async fn gateway_webhook_handler(
-    axum::State(state): axum::State<GatewaySharedState>,
+    axum::extract::State(state): axum::extract::State<SharedGatewayState>,
     body: axum::Json<serde_json::Value>,
 ) -> axum::Json<serde_json::Value> {
-    let app = (*state.0).clone();
-    let configs = PlatformConfigsState(Arc::clone(&state.1));
+    let app = (*state.app).clone();
+    let configs = PlatformConfigsState(state.configs);
     handle_incoming_message("webhook".to_string(), body.0, app, configs).await
 }
 
@@ -292,11 +303,12 @@ pub async fn start_gateway_server(
     port: u16,
     app: AppHandle,
     configs_state: PlatformConfigsState,
-    mut shutdown_rx: oneshot::Receiver<()>,
+    shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), String> {
-    // Wrap shared state in Arc for Axum State extraction
-    let shared_app: Arc<AppHandle> = Arc::new(app);
-    let shared_configs: Arc<Mutex<HashMap<String, PlatformConfig>>> = configs_state.0.clone();
+    let shared_state = SharedGatewayState {
+        app: Arc::new(app),
+        configs: configs_state.0.clone(),
+    };
 
     let app_cors = tower_http::cors::CorsLayer::permissive();
 
@@ -306,7 +318,7 @@ pub async fn start_gateway_server(
         .route("/gateway/dingtalk", axum::routing::post(gateway_dingtalk_handler))
         .route("/gateway/wecom", axum::routing::post(gateway_wecom_handler))
         .route("/gateway/webhook", axum::routing::post(gateway_webhook_handler))
-        .with_state((shared_app, shared_configs))
+        .with_state(shared_state)
         .layer(app_cors);
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
