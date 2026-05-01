@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::oneshot;
 
 use crate::commands::notification::send_channel_notification;
@@ -100,7 +100,7 @@ fn parse_feishu_message(body: &serde_json::Value) -> Option<ParsedMessage> {
     let user_id = sender.get("user_id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
     let content_str = event.get("message")?.get("content")?.as_str()?;
     let content_json: serde_json::Value = serde_json::from_str(content_str).ok()?;
-    let text = content_json.get("text")?.as_str()?.to_string()?;
+    let text = content_json.get("text")?.as_str()?.to_string();
 
     Some(ParsedMessage {
         platform: "feishu".to_string(),
@@ -116,7 +116,7 @@ fn parse_dingtalk_message(body: &serde_json::Value) -> Option<ParsedMessage> {
     if msg_type != "text" {
         return None;
     }
-    let content = body.get("text")?.get("content")?.as_str()?.to_string()?;
+    let content = body.get("text")?.get("content")?.as_str()?.to_string();
     let user_id = body.get("senderStaffId")
         .or_else(|| body.get("senderId"))
         .and_then(|v| v.as_str())
@@ -133,8 +133,8 @@ fn parse_dingtalk_message(body: &serde_json::Value) -> Option<ParsedMessage> {
 }
 
 fn parse_wecom_message(body: &serde_json::Value) -> Option<ParsedMessage> {
-    let content = body.get("Content")?.as_str()?.to_string()?;
-    let user_id = body.get("FromUserName")?.as_str()?.to_string().unwrap_or_default();
+    let content = body.get("Content")?.as_str()?.to_string();
+    let user_id = body.get("FromUserName")?.as_str()?.unwrap_or("unknown").to_string();
 
     Some(ParsedMessage {
         platform: "wecom".to_string(),
@@ -249,45 +249,64 @@ async fn health_handler() -> axum::Json<serde_json::Value> {
     }))
 }
 
+// Axum State type: (Arc<AppHandle>, Arc<Mutex<HashMap<String, PlatformConfig>>>)
+type GatewaySharedState = (Arc<AppHandle>, Arc<Mutex<HashMap<String, PlatformConfig>>>);
+
+async fn gateway_feishu_handler(
+    axum::State(state): axum::State<GatewaySharedState>,
+    body: axum::Json<serde_json::Value>,
+) -> axum::Json<serde_json::Value> {
+    let app = (*state.0).clone();
+    let configs = PlatformConfigsState(Arc::clone(&state.1));
+    handle_incoming_message("feishu".to_string(), body.0, app, configs).await
+}
+
+async fn gateway_dingtalk_handler(
+    axum::State(state): axum::State<GatewaySharedState>,
+    body: axum::Json<serde_json::Value>,
+) -> axum::Json<serde_json::Value> {
+    let app = (*state.0).clone();
+    let configs = PlatformConfigsState(Arc::clone(&state.1));
+    handle_incoming_message("dingtalk".to_string(), body.0, app, configs).await
+}
+
+async fn gateway_wecom_handler(
+    axum::State(state): axum::State<GatewaySharedState>,
+    body: axum::Json<serde_json::Value>,
+) -> axum::Json<serde_json::Value> {
+    let app = (*state.0).clone();
+    let configs = PlatformConfigsState(Arc::clone(&state.1));
+    handle_incoming_message("wecom".to_string(), body.0, app, configs).await
+}
+
+async fn gateway_webhook_handler(
+    axum::State(state): axum::State<GatewaySharedState>,
+    body: axum::Json<serde_json::Value>,
+) -> axum::Json<serde_json::Value> {
+    let app = (*state.0).clone();
+    let configs = PlatformConfigsState(Arc::clone(&state.1));
+    handle_incoming_message("webhook".to_string(), body.0, app, configs).await
+}
+
 pub async fn start_gateway_server(
     port: u16,
     app: AppHandle,
     configs_state: PlatformConfigsState,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), String> {
-    let app_feishu = app.clone();
-    let configs_feishu = PlatformConfigsState(Arc::clone(&configs_state.0));
-    let app_dingtalk = app.clone();
-    let configs_dingtalk = PlatformConfigsState(Arc::clone(&configs_state.0));
-    let app_wecom = app.clone();
-    let configs_wecom = PlatformConfigsState(Arc::clone(&configs_state.0));
-    let app_webhook = app.clone();
-    let configs_webhook = PlatformConfigsState(Arc::clone(&configs_state.0));
+    // Wrap shared state in Arc for Axum State extraction
+    let shared_app: Arc<AppHandle> = Arc::new(app);
+    let shared_configs: Arc<Mutex<HashMap<String, PlatformConfig>>> = configs_state.0.clone();
 
     let app_cors = tower_http::cors::CorsLayer::permissive();
 
     let app = axum::Router::new()
         .route("/gateway/health", axum::routing::get(health_handler))
-        .route("/gateway/feishu", axum::routing::post(move |body: axum::Json<serde_json::Value>| {
-            let app = app_feishu.clone();
-            let configs = PlatformConfigsState(Arc::clone(&configs_feishu.0));
-            async move { handle_incoming_message("feishu".to_string(), body.0, app, configs).await }
-        }))
-        .route("/gateway/dingtalk", axum::routing::post(move |body: axum::Json<serde_json::Value>| {
-            let app = app_dingtalk.clone();
-            let configs = PlatformConfigsState(Arc::clone(&configs_dingtalk.0));
-            async move { handle_incoming_message("dingtalk".to_string(), body.0, app, configs).await }
-        }))
-        .route("/gateway/wecom", axum::routing::post(move |body: axum::Json<serde_json::Value>| {
-            let app = app_wecom.clone();
-            let configs = PlatformConfigsState(Arc::clone(&configs_wecom.0));
-            async move { handle_incoming_message("wecom".to_string(), body.0, app, configs).await }
-        }))
-        .route("/gateway/webhook", axum::routing::post(move |body: axum::Json<serde_json::Value>| {
-            let app = app_webhook.clone();
-            let configs = PlatformConfigsState(Arc::clone(&configs_webhook.0));
-            async move { handle_incoming_message("webhook".to_string(), body.0, app, configs).await }
-        }))
+        .route("/gateway/feishu", axum::routing::post(gateway_feishu_handler))
+        .route("/gateway/dingtalk", axum::routing::post(gateway_dingtalk_handler))
+        .route("/gateway/wecom", axum::routing::post(gateway_wecom_handler))
+        .route("/gateway/webhook", axum::routing::post(gateway_webhook_handler))
+        .with_state((shared_app, shared_configs))
         .layer(app_cors);
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));

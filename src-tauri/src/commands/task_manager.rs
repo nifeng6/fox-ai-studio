@@ -425,7 +425,7 @@ pub fn delete_task(
         fs::remove_file(path).map_err(|e| format!("Delete: {}", e))?;
     }
 
-    let _ = app.emit("task:deleted", task_id);
+    let _ = app.emit("task:deleted", &task_id);
     log::info!("[task_manager] Deleted task {}", task_id);
     Ok(())
 }

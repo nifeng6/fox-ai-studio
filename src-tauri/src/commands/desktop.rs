@@ -737,6 +737,7 @@ fn get_desktop_icons() -> Vec<String> {
     }
 
     #[repr(C)]
+    #[derive(Clone, Copy)]
     struct POINT { x: i32, y: i32 }
 
     const MEM_COMMIT: u32 = 0x1000;
